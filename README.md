@@ -31,7 +31,7 @@ A desktop market helper for **BitCraft** that uses **BitJita** market data to ma
 
 ## Current Version
 
-**v3.6.9**
+**v3.7.1**
 
 ## Requirements
 
