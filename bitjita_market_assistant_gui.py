@@ -4069,9 +4069,21 @@ class BitJitaMarketAssistant(tk.Tk):
             ("id", "Item ID", 110),
         ]
 
+        plan_anchors = {
+            "item": "w",
+            "qty": "e",
+            "cost": "e",
+            "unit": "e",
+            "claim": "w",
+            "region": "w",
+            "distance": "e",
+            "seller": "w",
+            "id": "e",
+        }
+
         for col, title, width in plan_defs:
-            self.plan_tree.heading(col, text=title)
-            self.plan_tree.column(col, width=width)
+            self.plan_tree.heading(col, text=title, anchor=plan_anchors[col])
+            self.plan_tree.column(col, width=width, anchor=plan_anchors[col])
 
         p_y = ttk.Scrollbar(
             plan_frame,
