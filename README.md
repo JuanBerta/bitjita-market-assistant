@@ -6,9 +6,21 @@ A desktop market helper for **BitCraft** that uses **BitJita** data to make item
 
 ## Current Version
 
-**v3.10.3**
+**v4.0.0**, updated for **BitCraft 1.0** (launched November 13, 2026).
+
+Version 1.0 introduces regional trading, banking, and marketplaces that connect across each region, so listings within a region are shared. This release keeps the existing region filters and does not change how the Item Search or Shopping List work.
 
 ## Features
+
+### Deals
+
+- Lists arbitrage opportunities from BitJita's `/api/market/deals` endpoint
+- Sorted by **Total profit** by default; click any column header to sort by profit %, profit per TP, TP, distance, and more
+- Each deal shows the buy and sell locations and regions, profit per unit, total profit for the available quantity, and **Est. TP**
+- **Est. TP** is the teleport energy for one trip from the buy location to the sell location, calculated on the BitCraft Small Hex grid with `ceil(distance / 400)`
+- **Profit / TP** shows total profit divided by Est. TP, to compare deals that need different amounts of energy
+- Filters: item name, region, item type, minimum profit %, maximum TP, minimum quantity, and minimum total profit
+- Results are cached for one minute; use **Refresh from BitJita** to reload
 
 ### Item Search
 
@@ -164,13 +176,13 @@ cd bitjita-market-assistant
 Run the current version:
 
 ```bash
-py bitjita_market_assistant_gui_v3_10_3.py
+py bitjita_market_assistant_gui_v4_0_0.py
 ```
 
 If your system uses `python` instead of `py`:
 
 ```bash
-python bitjita_market_assistant_gui_v3_10_3.py
+python bitjita_market_assistant_gui_v4_0_0.py
 ```
 
 ## Building a Windows EXE
@@ -184,13 +196,13 @@ py -m pip install pyinstaller
 Build the current release as a single-file GUI executable:
 
 ```bash
-py -m PyInstaller --onefile --windowed --name "BitJita-Market-Assistant-v3.10.3" bitjita_market_assistant_gui_v3_10_3.py
+py -m PyInstaller --onefile --windowed --name "BitJita-Market-Assistant-v4.0.0" bitjita_market_assistant_gui_v4_0_0.py
 ```
 
 The executable will be created under:
 
 ```text
-dist\BitJita-Market-Assistant-v3.10.3.exe
+dist\BitJita-Market-Assistant-v4.0.0.exe
 ```
 
 ### Antivirus / VirusTotal Note
