@@ -17,9 +17,12 @@ Version 1.0 introduces regional trading, banking, and marketplaces that connect 
 - Lists arbitrage opportunities from BitJita's `/api/market/deals` endpoint
 - Sorted by **Total profit** by default; click any column header to sort by profit %, profit per TP, TP, distance, and more
 - Each deal shows the buy and sell locations and regions, profit per unit, total profit for the available quantity, and **Est. TP**
-- **Est. TP** is the teleport energy for one trip from the buy location to the sell location, calculated on the BitCraft Small Hex grid with `ceil(distance / 400)`
+- **Total cost** is the buy price multiplied by the deal's available quantity
+- **Est. TP** is the teleport energy for one trip from the buy location to the sell location, calculated on the BitCraft Small Hex grid. Within a region it is `ceil(distance / 400)`. Across regions it also rises with inventory fill: `ceil(distance / 400 × (1 + 0.14 × Inventory %))`
+- **Inventory %** sets how full your inventory is (0-100) when travelling; it only changes the TP for cross-region deals
+- **Cross-region** shows whether the buy and sell locations are in different regions
 - **Profit / TP** shows total profit divided by Est. TP, to compare deals that need different amounts of energy
-- Filters: item name, region, item type, minimum profit %, maximum TP, minimum quantity, and minimum total profit
+- Filters: item name, region, item type, minimum profit %, maximum TP, minimum quantity, minimum total profit, and inventory %
 - Results are cached for one minute; use **Refresh from BitJita** to reload
 
 ### Item Search

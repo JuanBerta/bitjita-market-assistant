@@ -1830,9 +1830,24 @@ def normalize_deal(raw):
     buy_point = {"x": raw.get("buyLocationX"), "z": raw.get("buyLocationZ")}
     sell_point = {"x": raw.get("sellLocationX"), "z": raw.get("sellLocationZ")}
     hex_distance = straight_distance(buy_point, sell_point)
-    tp = estimate_tp(hex_distance)
+    buy_region_id = raw.get("buyRegionId")
+    sell_region_id = raw.get("sellRegionId")
+    if buy_region_id is not None and sell_region_id is not None:
+        cross_region = buy_region_id != sell_region_id
+    else:
+        buy_name = str(raw.get("buyRegionName") or "")
+        sell_name = str(raw.get("sellRegionName") or "")
+        cross_region = bool(buy_name and sell_name and buy_name != sell_name)
+    tp = deal_tp(hex_distance, cross_region, 0)
 
     total_profit = to_number(raw.get("totalProfit"))
+    buy_price = to_number(raw.get("buyPrice"))
+    quantity = to_number(raw.get("maxQuantity"))
+    total_cost = (
+        buy_price * quantity
+        if buy_price is not None and quantity is not None
+        else None
+    )
 
     return {
         "id": str(raw.get("id") or ""),
@@ -1849,6 +1864,8 @@ def normalize_deal(raw):
         "total_profit": total_profit,
         "hex_distance": hex_distance,
         "api_distance": to_number(raw.get("distance")),
+        "cross_region": cross_region,
+        "total_cost": total_cost,
         "tp": tp,
         "profit_per_tp": (
             total_profit / tp
@@ -1862,6 +1879,9 @@ def normalize_deal(raw):
     }
 
 
+_deals_last_load = {"entries": 0, "api": ""}
+
+
 def get_market_deals(force_refresh=False):
     with _deals_lock:
         age = time.monotonic() - _deals_cache["timestamp"]
@@ -1869,8 +1889,19 @@ def get_market_deals(force_refresh=False):
             return [dict(deal) for deal in _deals_cache["deals"]]
 
     data = api_get("/market/deals")
+    raw_entries = (data or {}).get("arbitrage") or []
+    api_used = BASE_URL
+    if not raw_entries and BASE_URL.rstrip("/") != DEFAULT_BASE_URL.rstrip("/"):
+        # A saved API address can be stale; try the documented address once.
+        try:
+            fallback = _request_json(DEFAULT_BASE_URL, "/market/deals")
+            raw_entries = (fallback or {}).get("arbitrage") or []
+            api_used = DEFAULT_BASE_URL
+        except Exception:
+            pass
+
     deals = []
-    for raw in data.get("arbitrage") or []:
+    for raw in raw_entries:
         if not isinstance(raw, dict):
             continue
         deal = normalize_deal(raw)
@@ -1881,8 +1912,40 @@ def get_market_deals(force_refresh=False):
     with _deals_lock:
         _deals_cache["timestamp"] = time.monotonic()
         _deals_cache["deals"] = [dict(deal) for deal in deals]
+    _deals_last_load.update(entries=len(raw_entries), api=api_used)
 
     return [dict(deal) for deal in deals]
+
+
+# In-game teleport cost (1.0). Within one region the cost is distance / 400.
+# Across regions it also grows with inventory fill:
+#   cost = (distance / 400) * (1 + 0.14 * fill%)
+# The 0.14 factor is fitted to in-game readings (fill 19.23% -> x3.69,
+# fill ~96% -> x14.46), so it may need adjusting with more data.
+CROSS_REGION_FILL_FACTOR = 0.14
+
+
+def deal_tp(distance, cross_region, inventory_percent=0):
+    if distance is None:
+        return None
+    base = distance / 400.0
+    if cross_region:
+        fill = min(100.0, max(0.0, float(inventory_percent or 0)))
+        base *= 1 + CROSS_REGION_FILL_FACTOR * fill
+    return int(math.ceil(round(base, 6)))
+
+
+def apply_inventory_to_deal(deal, inventory_percent):
+    """Return a copy of the deal with TP and Profit / TP for this fill level."""
+    updated = dict(deal)
+    tp = deal_tp(deal["hex_distance"], deal["cross_region"], inventory_percent)
+    updated["tp"] = tp
+    updated["profit_per_tp"] = (
+        deal["total_profit"] / tp
+        if deal["total_profit"] is not None and tp
+        else None
+    )
+    return updated
 
 
 def filter_deals(
@@ -3160,7 +3223,12 @@ class BitJitaMarketAssistant(tk.Tk):
         # Bind both common Tk event names so it works consistently on Windows
         # and other platforms.
         self.bind_all("<Shift-Tab>", self._toggle_primary_tabs, add="+")
-        self.bind_all("<ISO_Left_Tab>", self._toggle_primary_tabs, add="+")
+        # Some platforms (notably Windows Tk) do not know the ISO_Left_Tab
+        # keysym and raise TclError; Shift-Tab above already covers them.
+        try:
+            self.bind_all("<ISO_Left_Tab>", self._toggle_primary_tabs, add="+")
+        except tk.TclError:
+            pass
 
     def _toggle_primary_tabs(self, _event=None):
         current = self.main_notebook.select()
@@ -5267,12 +5335,14 @@ class BitJitaMarketAssistant(tk.Tk):
         ("rarity", "Rarity", 90, "w"),
         ("quantity", "Qty", 70, "e"),
         ("buy_price", "Buy at", 85, "e"),
+        ("total_cost", "Total cost", 105, "e"),
         ("sell_price", "Sell at", 85, "e"),
         ("profit", "Profit / unit", 95, "e"),
         ("profit_percent", "Profit %", 85, "e"),
         ("total_profit", "Total profit", 105, "e"),
         ("tp", "Est. TP", 70, "e"),
         ("profit_per_tp", "Profit / TP", 95, "e"),
+        ("cross_region", "Cross-region", 95, "w"),
         ("hex_distance", "Hex distance", 105, "e"),
         ("from_location", "Buy location", 170, "w"),
         ("from_region", "Buy region", 105, "w"),
@@ -5280,11 +5350,13 @@ class BitJitaMarketAssistant(tk.Tk):
         ("to_region", "Sell region", 105, "w"),
     ]
     DEAL_TEXT_COLUMNS = {
-        "item", "rarity", "from_location", "from_region", "to_location", "to_region",
+        "item", "rarity", "cross_region", "from_location", "from_region", "to_location", "to_region",
     }
 
     @staticmethod
     def _format_deal_value(column, value):
+        if column == "cross_region":
+            return "Yes" if value else "No"
         if column in BitJitaMarketAssistant.DEAL_TEXT_COLUMNS:
             return value or "-"
         if value is None:
@@ -5317,7 +5389,8 @@ class BitJitaMarketAssistant(tk.Tk):
             text=(
                 "Most profitable BitJita arbitrage deals. Est. TP is the teleport "
                 "energy for one trip from the buy location to the sell location, "
-                "assuming an empty inventory (1 TP per 400 hexes, rounded up)."
+                "1 TP per 400 hexes, rounded up. Across regions the cost also rises "
+                "with Inventory % (how full your inventory is, 0-100)."
             ),
         ).pack(anchor="w", pady=(2, 12))
 
@@ -5331,6 +5404,7 @@ class BitJitaMarketAssistant(tk.Tk):
         self.deals_max_tp_var = tk.StringVar()
         self.deals_min_qty_var = tk.StringVar()
         self.deals_min_total_var = tk.StringVar()
+        self.deals_inv_var = tk.StringVar(value="0")
 
         labels_and_widgets = [
             ("Item contains", "entry", self.deals_text_var, 22),
@@ -5340,6 +5414,7 @@ class BitJitaMarketAssistant(tk.Tk):
             ("Max TP", "entry", self.deals_max_tp_var, 9),
             ("Min Qty", "entry", self.deals_min_qty_var, 9),
             ("Min Total Profit", "entry", self.deals_min_total_var, 14),
+            ("Inventory %", "entry", self.deals_inv_var, 10),
         ]
 
         for col, (label, kind, var, width) in enumerate(labels_and_widgets):
@@ -5470,6 +5545,11 @@ class BitJitaMarketAssistant(tk.Tk):
             self.deals_region_var.set("Any")
 
         self._apply_deals_filters()
+        if not deals:
+            self.deals_status_var.set(
+                f"BitJita returned {_deals_last_load['entries']} deal entries from "
+                f"{_deals_last_load['api'] or 'the API'}, and none were profitable."
+            )
 
     def _apply_deals_filters(self):
         try:
@@ -5477,13 +5557,20 @@ class BitJitaMarketAssistant(tk.Tk):
             max_tp = self._parse_optional_number(self.deals_max_tp_var.get(), "Max TP")
             min_qty = self._parse_optional_number(self.deals_min_qty_var.get(), "Min Qty")
             min_total = self._parse_optional_number(self.deals_min_total_var.get(), "Min Total Profit")
+            inventory = self._parse_optional_number(self.deals_inv_var.get(), "Inventory %")
         except ValueError as exc:
             messagebox.showwarning("Invalid filter", str(exc))
             return
 
+        inventory = 0 if inventory is None else inventory
+        if not 0 <= inventory <= 100:
+            messagebox.showwarning("Invalid filter", "Inventory % must be between 0 and 100.")
+            return
+
+        priced = [apply_inventory_to_deal(deal, inventory) for deal in self._deals_all]
         region = self.deals_region_var.get()
         rows = filter_deals(
-            self._deals_all,
+            priced,
             text=self.deals_text_var.get(),
             region=None if region in ("", "Any") else region,
             market_type=self.deals_type_var.get(),
@@ -6845,11 +6932,12 @@ class BitJitaMarketAssistant(tk.Tk):
         try:
             pieces = list(discover_armor_set_pieces(prefix, tier, category))
         except Exception as exc:
+            error_text = str(exc)
             self.after(
                 0,
                 lambda: messagebox.showerror(
                     "Set lookup failed",
-                    f"Could not check {set_name} on BitJita.\\n\\n{exc}",
+                    f"Could not check {set_name} on BitJita.\n\n{error_text}",
                 ),
             )
             self.after(
@@ -7536,9 +7624,10 @@ class BitJitaMarketAssistant(tk.Tk):
             )
 
         except Exception as exc:
+            error_text = str(exc)
             self.after(
                 0,
-                lambda: self._shopping_error(str(exc)),
+                lambda: self._shopping_error(error_text),
             )
 
     def _format_missing_items(self, missing_items):
